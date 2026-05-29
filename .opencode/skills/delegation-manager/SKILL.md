@@ -37,26 +37,29 @@ task_type: choose the most appropriate type
 
 prompt: ONLY the information the worker needs
   - What command to run (if not in `command` field)
-  - What to look for in the output
-  - What constitutes success/failure
   - DO NOT include your full reasoning or context
 
-command: the bash command (for run_and_observe tasks)
+focus: tell the worker WHAT to look for
+  - Specific error patterns, keywords, or signals
+  - What constitutes success vs failure
+  - What parts of the output matter vs what to ignore
+  - Examples: "Look for TypeScript compilation errors", "Check if any tests are marked FAIL", "Extract lines containing 'ERROR' or 'WARN'"
 
-mode: "foreground" (default, blocks until done)
+command: the bash command (for run_and_observe tasks)
 
 on_failure: "report" (default — worker reports the error, you decide next steps)
 ```
 
 ## Prompt Crafting Rules
 
-When writing the prompt for the worker:
+When writing the prompt and focus for the worker:
 
-1. **Be specific** — "Run `npm test` and report which tests failed" not "run the tests"
-2. **Include success criteria** — "Success = exit code 0 and no FAIL lines in output"
-3. **Include failure criteria** — "Failure = any test marked FAIL or non-zero exit"
-4. **Keep it local** — don't explain the full project context, just what the worker needs
-5. **Don't include your reasoning** — the worker doesn't need to know why you're doing this
+1. **prompt = what to do** — "Run `npm test`" not "run the tests and figure out what's wrong"
+2. **focus = what to look for** — "TypeScript errors, test failures, non-zero exit code. Success = exit 0 with no FAIL lines."
+3. **Be specific about signals** — Tell the worker exact patterns: "FAIL", "Error:", "exit code 1", "Cannot find module"
+4. **Include success/failure criteria** — So the worker knows when to report success vs anomaly
+5. **Keep it local** — don't explain the full project context, just what the worker needs
+6. **Don't include your reasoning** — the worker doesn't need to know why you're doing this
 
 ## Handling Results
 
@@ -82,8 +85,29 @@ User: "Run the test suite and tell me if anything broke"
 You: delegate_task({
   task_type: "run_and_observe",
   command: "npm test",
-  prompt: "Run the test suite. Report which tests passed and which failed. If all pass, say so concisely.",
+  prompt: "Run the test suite.",
+  focus: "Look for FAIL markers, non-zero exit code, and error messages. Success = exit 0 with all tests passing. Report which specific tests failed if any.",
   on_failure: "report"
+})
+```
+
+### Good delegation (build)
+```
+delegate_task({
+  task_type: "run_and_observe",
+  command: "npm run build",
+  prompt: "Run the production build.",
+  focus: "Look for TypeScript compilation errors (TS####), 'Cannot find module', webpack/vite errors. Success = exit 0 with no error output. Report the first error if build fails.",
+  on_failure: "report"
+})
+```
+
+### Bad delegation (no focus — worker doesn't know what matters)
+```
+delegate_task({
+  task_type: "run_and_observe",
+  command: "npm test",
+  prompt: "Run the tests"
 })
 ```
 

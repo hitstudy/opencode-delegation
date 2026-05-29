@@ -30,11 +30,17 @@ const MAX_RETRIES = 2;
 const BASH_OUTPUT_TRUNCATE_LINES = 300;
 const WORKER_AGENT = "worker";
 
+type DelegationPluginOptions = {
+  workerAgent?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Plugin entry
 // ---------------------------------------------------------------------------
 
-export default (async ({ client }) => {
+export default (async ({ client }, options?: DelegationPluginOptions) => {
+  const workerAgent = options?.workerAgent ?? WORKER_AGENT;
+
   return {
     // --- Hook 1: Inject delegation hint into bash tool description ---
     "tool.definition": async (input, output) => {
@@ -51,17 +57,8 @@ export default (async ({ client }) => {
 
     // --- Hook 3: After execution — post-process long outputs ---
     "tool.execute.after": async (input, output) => {
-      // Post-process delegate_task results
       if (input.tool === "delegate_task") {
-        try {
-          const raw = output.output;
-          const taskType = input.args?.task_type as string | undefined;
-          const parsed = parseDelegateTaskOutput(raw);
-          const filtered = filterResult(parsed, taskType);
-          output.output = JSON.stringify(filtered, null, 2);
-        } catch {
-          // Parsing failed — leave output as-is
-        }
+        // delegate_task already parses and filters worker output in execute().
         return;
       }
 
@@ -124,6 +121,10 @@ export default (async ({ client }) => {
           prompt: tool.schema
             .string()
             .describe("Task description for the worker. Include only what the worker needs to know."),
+          focus: tool.schema
+            .string()
+            .optional()
+            .describe("What the worker should pay attention to: specific errors, patterns, success/failure criteria. E.g. 'Look for TypeScript compilation errors and test failures. Success = exit code 0.'"),
           timeout: tool.schema
             .number()
             .optional()
@@ -150,6 +151,7 @@ export default (async ({ client }) => {
             task_type: args.task_type,
             command: args.command,
             prompt: args.prompt,
+            focus: args.focus,
             timeout: args.timeout,
             on_failure: args.on_failure,
             max_retries: args.max_retries,
@@ -165,6 +167,7 @@ export default (async ({ client }) => {
                 client,
                 parentSessionID: _ctx.sessionID,
                 directory: _ctx.directory,
+                workerAgent,
                 prompt: workerPrompt,
                 timeout,
               });
@@ -213,12 +216,14 @@ async function runWorkerTask(input: {
   client: Parameters<Plugin>[0]["client"];
   parentSessionID: string;
   directory: string;
+  workerAgent: string;
   prompt: string;
   timeout: number;
 }): Promise<string> {
+  let workerSessionID: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out after ${Math.round(input.timeout / 1000)}s`)), input.timeout);
+    timer = setTimeout(() => reject(new WorkerTimeoutError(input.timeout)), input.timeout);
   });
 
   try {
@@ -237,16 +242,17 @@ async function runWorkerTask(input: {
       if (created.error || !created.data) {
         throw new Error(`Failed to create worker session: ${JSON.stringify(created.error ?? "no data")}`);
       }
+      workerSessionID = created.data.id;
 
       const response = await input.client.session.prompt({
         path: {
-          id: created.data.id,
+          id: workerSessionID,
         },
         query: {
           directory: input.directory,
         },
         body: {
-          agent: WORKER_AGENT,
+          agent: input.workerAgent,
           parts: [
             {
               type: "text",
@@ -270,35 +276,35 @@ async function runWorkerTask(input: {
     })(),
     timeoutPromise,
   ]);
+  } catch (error) {
+    if (workerSessionID && isTimeoutError(error)) {
+      await abortWorkerSession(input.client, workerSessionID).catch(() => {});
+    }
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
 function isTimeoutError(error: unknown): boolean {
-  return error instanceof Error && /timed out|timeout/i.test(error.message);
+  return error instanceof WorkerTimeoutError || (error instanceof Error && /timed out|timeout/i.test(error.message));
 }
 
-function parseDelegateTaskOutput(raw: string): DelegateTaskOutput {
-  try {
-    const parsed = JSON.parse(raw) as Partial<DelegateTaskOutput>;
-    if (
-      typeof parsed.summary === "string" &&
-      Array.isArray(parsed.anomalies) &&
-      typeof parsed.duration === "number" &&
-      (parsed.status === "success" || parsed.status === "failure" || parsed.status === "timeout" || parsed.status === "anomaly")
-    ) {
-      return {
-        status: parsed.status,
-        summary: parsed.summary,
-        details: typeof parsed.details === "string" ? parsed.details : undefined,
-        anomalies: parsed.anomalies.filter((item): item is string => typeof item === "string"),
-        duration: parsed.duration,
-      };
-    }
-  } catch {
-    // Fall through to text parser.
-  }
+async function abortWorkerSession(client: Parameters<Plugin>[0]["client"], sessionID: string): Promise<void> {
+  const aborted = await client.session.abort({
+    path: {
+      id: sessionID,
+    },
+  });
 
-  return parseWorkerResult(raw, 0);
+  if (aborted.error) {
+    throw new Error(`Failed to abort timed-out worker session: ${JSON.stringify(aborted.error)}`);
+  }
+}
+
+class WorkerTimeoutError extends Error {
+  constructor(timeout: number) {
+    super(`Timed out after ${Math.round(timeout / 1000)}s`);
+    this.name = "WorkerTimeoutError";
+  }
 }

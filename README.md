@@ -73,6 +73,32 @@ Add the plugin, skill path, and worker agent config to `opencode.json`:
 }
 ```
 
+If your project already has an agent named `worker`, choose another name and pass it as a plugin option:
+
+```json
+{
+  "plugin": [
+    ["opencode-delegation", { "workerAgent": "delegation-worker" }]
+  ],
+  "agent": {
+    "delegation-worker": {
+      "description": "Executes low-cognitive-density tasks.",
+      "mode": "subagent",
+      "model": "small_model",
+      "steps": 20,
+      "permission": {
+        "bash": "allow",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "edit": "deny",
+        "task": "deny"
+      }
+    }
+  }
+}
+```
+
 The package also ships `agent/worker.md` and `skill/delegation-manager/SKILL.md` for users who prefer to copy them into a project-local `.opencode/` directory.
 
 ```

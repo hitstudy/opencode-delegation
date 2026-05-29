@@ -18,6 +18,7 @@ export type DelegateTaskInput = {
   task_type: TaskType;
   command?: string;
   prompt: string;
+  focus?: string;
   timeout?: number;
   on_failure?: "report" | "retry" | "abort";
   max_retries?: number;
@@ -89,8 +90,7 @@ export function buildWorkerPrompt(input: DelegateTaskInput): string {
 
   // Timeout constraint
   if (input.timeout) {
-    const seconds = Math.round(input.timeout / 1000);
-    constraints.push(`Timeout: ${seconds} seconds. If the command does not complete within this time, report timeout status.`);
+    constraints.push(`Timeout: ${formatDuration(input.timeout)}. If the command does not complete within this time, report timeout status.`);
   }
 
   // Output filter
@@ -110,6 +110,13 @@ export function buildWorkerPrompt(input: DelegateTaskInput): string {
     "## Execution Constraints",
     constraints.map((c) => `- ${c}`).join("\n"),
     "",
+  ];
+
+  if (input.focus) {
+    sections.push("## What to Focus On", input.focus.trim(), "");
+  }
+
+  sections.push(
     "## Task Description",
     input.prompt.trim(),
     "",
@@ -121,9 +128,18 @@ export function buildWorkerPrompt(input: DelegateTaskInput): string {
     "DETAILS: [key details, truncated to 50 lines]",
     "ANOMALIES: [comma-separated list, or 'none']",
     "```",
-  ];
+  );
 
   return sections.join("\n");
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms} ms`;
+  }
+
+  const seconds = Math.ceil(ms / 1000);
+  return `${seconds} second${seconds === 1 ? "" : "s"}`;
 }
 
 // ---------------------------------------------------------------------------
