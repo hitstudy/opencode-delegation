@@ -8,7 +8,7 @@ When running test suites, builds, log monitoring, or heavy search through an AI 
 
 ## Solution
 
-The plugin introduces a `delegate_task` tool and a `worker` agent backed by your configured `small_model`. The main model delegates long-running or high-output tasks to the worker, which executes independently and returns a structured result. The main model's context stays clean, and its tokens are spent only on high-value decisions.
+The plugin introduces a `delegate_task` tool and a `worker` agent backed by your configured `small_model`. The main model can explicitly delegate long-running or high-output tasks to the worker, which executes independently and returns a structured result. The plugin also nudges the model toward delegation for obvious long tasks and trims oversized bash output. The main model's context stays cleaner, and its tokens are spent more on high-value decisions.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -36,36 +36,50 @@ The plugin introduces a `delegate_task` tool and a `worker` agent backed by your
 
 ## Installation
 
-### Option A: npm plugin (recommended for development)
+### npm package
 
 ```bash
-# Clone or copy into your project
-git clone <this-repo> opencode-delegation
-
-# Add to opencode.json
+npm install --save-dev opencode-delegation
 ```
+
+Add the plugin, skill path, and worker agent config to `opencode.json`:
 
 ```json
 {
   "small_model": "anthropic/claude-haiku-3.5",
-  "plugin": ["./opencode-delegation"],
+  "plugin": ["opencode-delegation"],
+  "agent": {
+    "worker": {
+      "description": "Executes low-cognitive-density tasks: run commands, observe output, detect anomalies, return structured results.",
+      "mode": "subagent",
+      "model": "small_model",
+      "steps": 20,
+      "permission": {
+        "bash": "allow",
+        "read": "allow",
+        "edit": "deny",
+        "task": "deny",
+        "todowrite": "deny",
+        "question": "deny",
+        "webfetch": "deny",
+        "glob": "allow",
+        "grep": "allow"
+      }
+    }
+  },
   "skills": {
-    "paths": ["./opencode-delegation/skill"]
+    "paths": ["./node_modules/opencode-delegation/skill"]
   }
 }
 ```
 
-### Option B: .opencode directory (zero-dependency)
-
-Copy the `.opencode/` directory into your project root. OpenCode auto-discovers plugins and agents from `.opencode/plugins/`, `.opencode/agents/`, and `.opencode/skills/`.
+The package also ships `agent/worker.md` and `skill/delegation-manager/SKILL.md` for users who prefer to copy them into a project-local `.opencode/` directory.
 
 ```
 your-project/
 ├── .opencode/
-│   ├── plugins/delegation-lifecycle.ts
 │   ├── agents/worker.md
-│   ├── skills/delegation-manager/SKILL.md
-│   └── opencode.json
+│   └── skills/delegation-manager/SKILL.md
 └── ...
 ```
 
@@ -110,11 +124,13 @@ Override `small_model` in `opencode.json` to control which cheap model the worke
 
 ## How it works
 
-### Automatic interception
+### Automatic guidance and output trimming
 
 The plugin's `tool.definition` hook injects a hint into the bash tool's description. Every time the main model considers running a bash command, it sees a reminder to prefer `delegate_task` for long-running or high-output commands.
 
-For commands the plugin recognizes as obviously long (test runners, build tools, log monitoring, heavy recursive search), the `tool.execute.after` hook automatically truncates output and attaches a structured summary — even if the main model used bash directly.
+For commands the plugin recognizes as obviously long (test runners, build tools, log monitoring, heavy recursive search), the `tool.execute.after` hook trims oversized bash output and attaches a structured summary.
+
+This is guidance, not a hard redirect. The reliable delegation path is an explicit `delegate_task` call.
 
 ### Explicit delegation
 
@@ -173,11 +189,6 @@ opencode-delegation/
 │       └── SKILL.md              # Main agent delegation guidance
 ├── agent/
 │   └── worker.md                 # Worker agent definition
-├── .opencode/                    # Self-contained reference implementation
-│   ├── plugins/delegation-lifecycle.ts
-│   ├── agents/worker.md
-│   ├── skills/delegation-manager/SKILL.md
-│   └── opencode.json
 ├── opencode.json                 # Reference config
 ├── package.json
 └── tsconfig.json
@@ -185,7 +196,7 @@ opencode-delegation/
 
 ## Design decisions
 
-**Why not hard-intercept bash calls?** OpenCode's `tool.execute.before` hook can mutate tool args but cannot redirect one tool to another. Setting flags on bash args does nothing — bash still executes. The plugin instead uses `tool.definition` hints + Skill guidance to steer the main model toward `delegate_task`, and `tool.execute.after` to post-process long bash outputs.
+**Why not hard-intercept bash calls?** OpenCode's plugin hooks can mutate tool args but cannot reliably redirect one tool into another in the general case. The plugin therefore uses `tool.definition` hints + Skill guidance to steer the main model toward `delegate_task`, and `tool.execute.after` to post-process long bash outputs. Explicit `delegate_task` calls are the dependable path.
 
 **Why foreground mode (blocking)?** The main model's LLM call blocks while the worker runs, consuming zero tokens. This matches the core goal: the main model should not think during low-cognition work.
 
