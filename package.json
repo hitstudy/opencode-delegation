@@ -1,0 +1,33 @@
+{
+  "name": "opencode-delegation",
+  "version": "0.1.0",
+  "description": "OpenCode plugin for delegating low-cognitive tasks to cheap worker subagents. Reduces token waste, context pollution, and improves long-task stability.",
+  "type": "module",
+  "main": "src/plugin.ts",
+  "exports": {
+    ".": "./src/plugin.ts"
+  },
+  "files": [
+    "src/",
+    "skill/",
+    "agent/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "delegation",
+    "subagent",
+    "task-runner"
+  ],
+  "license": "MIT"
+}
